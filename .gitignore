@@ -11,6 +11,6 @@ Thumbs.db
 .*
 !.gitignore
 
-# ignore all test files anf folders
+# ignore all test files and folders
 test*
 Test*
