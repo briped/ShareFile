@@ -164,6 +164,178 @@ function Get-Account {
 	Write-Verbose -Message "$($MyInvocation.MyCommand) : Invoke-RestMethod @$($Splatter | ConvertTo-Json -Compress)"
 	Invoke-RestMethod @Splatter
 }
+function Get-AccountPreference {
+	# https://api.sharefile.com/docs/resource?name=Accounts#Get_Account_Preferences
+	[CmdletBinding()]
+	param (
+	)
+	$Script:Token = Get-Token
+	$Header = @{
+		Authorization = "Bearer $($Script:Token.access_token)"
+	}
+	$Uri = "https://$($Script:Token.subdomain).$($Script:Token.apicp)/sf/v3/Accounts/Preferences"
+	$Splatter = @{
+		ContentType = 'application/json'
+		Method = 'GET'
+		Uri = $Uri
+		Header = $Header
+	}
+	if ($Script:Config.Proxy) {
+		$Splatter.Proxy = $Script:Config.Proxy
+	}
+	Write-Verbose -Message "$($MyInvocation.MyCommand) : Invoke-RestMethod @$($Splatter | ConvertTo-Json -Compress)"
+	Invoke-RestMethod @Splatter
+}
+function Get-Branding {
+	# https://api.sharefile.com/docs/resource?name=Accounts#Get_current_Account_branding
+	[CmdletBinding()]
+	param (
+	)
+	$Script:Token = Get-Token
+	$Header = @{
+		Authorization = "Bearer $($Script:Token.access_token)"
+	}
+	$Uri = "https://$($Script:Token.subdomain).$($Script:Token.apicp)/sf/v3/Accounts/Branding"
+	$Splatter = @{
+		ContentType = 'application/json'
+		Method = 'GET'
+		Uri = $Uri
+		Header = $Header
+	}
+	if ($Script:Config.Proxy) {
+		$Splatter.Proxy = $Script:Config.Proxy
+	}
+	Write-Verbose -Message "$($MyInvocation.MyCommand) : Invoke-RestMethod @$($Splatter | ConvertTo-Json -Compress)"
+	Invoke-RestMethod @Splatter
+}
+function Get-AccountSSO {
+	# https://api.sharefile.com/docs/resource?name=Accounts#Get_Account_Single_Sign-On_Configuration
+	[CmdletBinding()]
+	param (
+		[Parameter()]
+		[string]
+		$Provider
+		,
+		# IDP Entity ID
+		[Parameter()]
+		[string]
+		$Entity
+	)
+	$Script:Token = Get-Token
+	$Header = @{
+		Authorization = "Bearer $($Script:Token.access_token)"
+	}
+	$Uri = "https://$($Script:Token.subdomain).$($Script:Token.apicp)/sf/v3/Accounts/SSO?"
+	$Data = @{}
+	if ($Provider) { $Data.provider = [uri]::EscapeDataString($Provider) }
+	if ($Entity) { $Data.idpEntityId = [uri]::EscapeDataString($Entity) }
+	$Query = @()
+	foreach ($k in $Data.Keys) {
+		$Query += "$($k)=$($Data[$k])"
+	}
+	$Uri += $Query -join '&'
+	$Splatter = @{
+		ContentType = 'application/json'
+		Method = 'GET'
+		Uri = $Uri
+		Header = $Header
+	}
+	if ($Script:Config.Proxy) {
+		$Splatter.Proxy = $Script:Config.Proxy
+	}
+	Write-Verbose -Message "$($MyInvocation.MyCommand) : Invoke-RestMethod @$($Splatter | ConvertTo-Json -Compress)"
+	Invoke-RestMethod @Splatter
+}
+
+function Get-AccountSSOInfo {
+	# https://api.sharefile.com/docs/resource?name=Accounts#Get_SSO_Info
+	[CmdletBinding()]
+	param (
+		[Parameter(Mandatory = $true)]
+		[string]
+		$SubDomain
+	)
+	$Script:Token = Get-Token
+	$Header = @{
+		Authorization = "Bearer $($Script:Token.access_token)"
+	}
+	$Uri = "https://$($Script:Token.subdomain).$($Script:Token.apicp)/sf/v3/Accounts/SSO?subdomain=$($SubDomain)"
+	$Splatter = @{
+		ContentType = 'application/json'
+		Method = 'GET'
+		Uri = $Uri
+		Header = $Header
+	}
+	if ($Script:Config.Proxy) {
+		$Splatter.Proxy = $Script:Config.Proxy
+	}
+	Write-Verbose -Message "$($MyInvocation.MyCommand) : Invoke-RestMethod @$($Splatter | ConvertTo-Json -Compress)"
+	Invoke-RestMethod @Splatter
+}
+function Get-AddressBook {
+	# https://api.sharefile.com/docs/resource?name=Accounts#Get_Account_AddressBooks
+	[CmdletBinding()]
+	param (
+		# Defines the type of Address Book to retrieve. Default is Personal
+		[Parameter()]
+		[ValidateSet('Personal', 'Shared', 'Group')]
+		[string]
+		$Type = 'Personal'
+		,
+		# Use if you want server-side searching to happen across email or name
+		[Parameter()]
+		[string]
+		$Search
+	)
+	$Script:Token = Get-Token
+	$Header = @{
+		Authorization = "Bearer $($Script:Token.access_token)"
+	}
+	$Uri = "https://$($Script:Token.subdomain).$($Script:Token.apicp)/sf/v3/Accounts/AddressBook?"
+	$Data = @{
+		type = $Type.ToLower()
+	}
+	if ($Search) { $Data.searchTerm = [uri]::EscapeDataString($Search) }
+	$Query = @()
+	foreach ($k in $Data.Keys) {
+		$Query += "$($k)=$($Data[$k])"
+	}
+	$Uri += $Query -join '&'
+
+	$Splatter = @{
+		ContentType = 'application/json'
+		Method = 'GET'
+		Uri = $Uri
+		Header = $Header
+	}
+	if ($Script:Config.Proxy) {
+		$Splatter.Proxy = $Script:Config.Proxy
+	}
+	Write-Verbose -Message "$($MyInvocation.MyCommand) : Invoke-RestMethod @$($Splatter | ConvertTo-Json -Compress)"
+	Invoke-RestMethod @Splatter
+}
+function Get-Capability {
+	# https://api.sharefile.com/docs/resource?name=Capabilities
+	[CmdletBinding()]
+	param (
+	)
+	$Script:Token = Get-Token
+	$Header = @{
+		Authorization = "Bearer $($Script:Token.access_token)"
+	}
+	$Uri = "https://$($Script:Token.subdomain).$($Script:Token.apicp)/sf/v3/Capabilities"
+	$Splatter = @{
+		ContentType = 'application/json'
+		Method = 'GET'
+		Uri = $Uri
+		Header = $Header
+	}
+	if ($Script:Config.Proxy) {
+		$Splatter.Proxy = $Script:Config.Proxy
+	}
+	Write-Verbose -Message "$($MyInvocation.MyCommand) : Invoke-RestMethod @$($Splatter | ConvertTo-Json -Compress)"
+	Invoke-RestMethod @Splatter
+}
 function Get-Employee {
 	# https://api.sharefile.com/docs/resource?name=Accounts#Get_List_of_current_Account_Employees
 	[CmdletBinding()]
@@ -255,16 +427,12 @@ function Get-Zone {
 }
 function Get-User {
 	# https://api.sharefile.com/docs/resource?name=Users#Get_User
-	# https://api.sharefile.com/docs/resource?name=Users#Get_HomeFolder
-	# https://api.sharefile.com/docs/resource?name=Users#Get_User's_FileBox_folder
 	[CmdletBinding(DefaultParameterSetName = 'Id')]
 	param (
 		[Parameter(ParameterSetName = 'Id'
 				,  Position = 0
 				,  ValueFromPipeline = $true
 				,  ValueFromPipelineByPropertyName = $true)]
-		[Parameter(ParameterSetName = 'HomeFolder')]
-		[Parameter(ParameterSetName = 'FileBox')]
 		[ValidateNotNullOrEmpty()]
 		[guid]
 		$Id
@@ -274,14 +442,6 @@ function Get-User {
 		[ValidatePattern('^[\w-\.]+@([a-z0-9-]+\.)+[a-z0-9-]{2,4}$')]
 		[string]
 		$Email
-		,
-		[Parameter(ParameterSetName = 'HomeFolder')]
-		[switch]
-		$HomeFolder
-		,
-		[Parameter(ParameterSetName = 'FileBox')]
-		[switch]
-		$FileBox
 	)
 	$Script:Token = Get-Token
 	$Header = @{
@@ -291,19 +451,196 @@ function Get-User {
 	if ($Id) {
 		Write-Verbose -Message "$($MyInvocation.MyCommand) : Getting user by ID: $($Id)"
 		$Uri += "($($Id))"
-		if ($HomeFolder) {
-			Write-Verbose -Message "$($MyInvocation.MyCommand) : Getting user HomeFolder"
-			$Uri += '/HomeFolder'
-		}
-		elseif ($FileBox) {
-			Write-Verbose -Message "$($MyInvocation.MyCommand) : Getting user FileBox"
-			$Uri += '/FileBox'
-		}
 	}
 	elseif ($PSCmdlet.ParameterSetName -eq 'Email') {
 		Write-Verbose -Message "$($MyInvocation.MyCommand) : Getting user by email: $($Email)"
 		$Uri += "?emailaddress=$($Email)"
 	}
+	else {
+		Write-Verbose -Message "$($MyInvocation.MyCommand) : Getting current user."
+	}
+	$Splatter = @{
+		ContentType = 'application/json'
+		Method = 'GET'
+		Uri = $Uri
+		Header = $Header
+	}
+	if ($Script:Config.Proxy) {
+		$Splatter.Proxy = $Script:Config.Proxy
+	}
+	Write-Verbose -Message "$($MyInvocation.MyCommand) : Invoke-RestMethod @$($Splatter | ConvertTo-Json -Compress)"
+	Invoke-RestMethod @Splatter
+}
+function Get-UserInfo {
+	# https://api.sharefile.com/docs/resource?name=Users#Get_Current_User_Info
+	[CmdletBinding()]
+	param (
+		[Parameter(Position = 0
+				,  ValueFromPipeline = $true
+				,  ValueFromPipelineByPropertyName = $true)]
+		[ValidateNotNullOrEmpty()]
+		[guid]
+		$Id
+	)
+	$Script:Token = Get-Token
+	$Header = @{
+		Authorization = "Bearer $($Script:Token.access_token)"
+	}
+	$Uri = "https://$($Script:Token.subdomain).$($Script:Token.apicp)/sf/v3/Users"
+	if ($Id) {
+		Write-Verbose -Message "$($MyInvocation.MyCommand) : Getting user's info by ID: $($Id)"
+		$Uri += "($($Id))"
+	}
+	else {
+		Write-Verbose -Message "$($MyInvocation.MyCommand) : Getting current user's info."
+	}
+	$Uri += '/Info'
+	$Splatter = @{
+		ContentType = 'application/json'
+		Method = 'GET'
+		Uri = $Uri
+		Header = $Header
+	}
+	if ($Script:Config.Proxy) {
+		$Splatter.Proxy = $Script:Config.Proxy
+	}
+	Write-Verbose -Message "$($MyInvocation.MyCommand) : Invoke-RestMethod @$($Splatter | ConvertTo-Json -Compress)"
+	Invoke-RestMethod @Splatter
+}
+function Get-UserPreference {
+	# https://api.sharefile.com/docs/resource?name=Users#Get_User_Preferences
+	[CmdletBinding()]
+	param (
+		[Parameter(Position = 0
+				,  ValueFromPipeline = $true
+				,  ValueFromPipelineByPropertyName = $true)]
+		[ValidateNotNullOrEmpty()]
+		[guid]
+		$Id
+	)
+	$Script:Token = Get-Token
+	$Header = @{
+		Authorization = "Bearer $($Script:Token.access_token)"
+	}
+	$Uri = "https://$($Script:Token.subdomain).$($Script:Token.apicp)/sf/v3/Users"
+	if ($Id) {
+		Write-Verbose -Message "$($MyInvocation.MyCommand) : Getting user preferences by ID: $($Id)"
+		$Uri += "($($Id))"
+	}
+	else {
+		Write-Verbose -Message "$($MyInvocation.MyCommand) : Getting current user preferences."
+	}
+	$Uri += "/Preferences"
+	$Splatter = @{
+		ContentType = 'application/json'
+		Method = 'GET'
+		Uri = $Uri
+		Header = $Header
+	}
+	if ($Script:Config.Proxy) {
+		$Splatter.Proxy = $Script:Config.Proxy
+	}
+	Write-Verbose -Message "$($MyInvocation.MyCommand) : Invoke-RestMethod @$($Splatter | ConvertTo-Json -Compress)"
+	Invoke-RestMethod @Splatter
+}
+function Get-UserSharedFolders {
+	# https://api.sharefile.com/docs/resource?name=Users#Get_List_of_User_Shared_Folders
+	[CmdletBinding()]
+	param (
+		[Parameter(Position = 0
+				,  ValueFromPipeline = $true
+				,  ValueFromPipelineByPropertyName = $true)]
+		[ValidateNotNullOrEmpty()]
+		[guid]
+		$Id
+	)
+	$Script:Token = Get-Token
+	$Header = @{
+		Authorization = "Bearer $($Script:Token.access_token)"
+	}
+	$Uri = "https://$($Script:Token.subdomain).$($Script:Token.apicp)/sf/v3/Users"
+	if ($Id) {
+		Write-Verbose -Message "$($MyInvocation.MyCommand) : Getting user's shared folders by ID: $($Id)"
+		$Uri += "($($Id))"
+	}
+	else {
+		Write-Verbose -Message "$($MyInvocation.MyCommand) : Getting current user's shared folders."
+	}
+	$Uri += "/AllSharedFolders"
+	$Splatter = @{
+		ContentType = 'application/json'
+		Method = 'GET'
+		Uri = $Uri
+		Header = $Header
+	}
+	if ($Script:Config.Proxy) {
+		$Splatter.Proxy = $Script:Config.Proxy
+	}
+	Write-Verbose -Message "$($MyInvocation.MyCommand) : Invoke-RestMethod @$($Splatter | ConvertTo-Json -Compress)"
+	Invoke-RestMethod @Splatter
+}
+function Get-UserFileBox {
+	# https://api.sharefile.com/docs/resource?name=Users#Get_User's_FileBox_folder
+	[CmdletBinding()]
+	param (
+		[Parameter(Position = 0
+				,  ValueFromPipeline = $true
+				,  ValueFromPipelineByPropertyName = $true)]
+		[ValidateNotNullOrEmpty()]
+		[guid]
+		$Id
+		,
+		[Parameter()]
+		[switch]
+		$Children
+	)
+	$Script:Token = Get-Token
+	$Header = @{
+		Authorization = "Bearer $($Script:Token.access_token)"
+	}
+	if (!$Id) {
+		$Id = (Get-User).Id
+	}
+	$Uri = "https://$($Script:Token.subdomain).$($Script:Token.apicp)/sf/v3/Users($($Id))"
+	if ($Children) {
+		$Uri += '/Box'
+	}
+	else {
+		$Uri += '/FileBox'
+	}
+	$Splatter = @{
+		ContentType = 'application/json'
+		Method = 'GET'
+		Uri = $Uri
+		Header = $Header
+	}
+	if ($Script:Config.Proxy) {
+		$Splatter.Proxy = $Script:Config.Proxy
+	}
+	Write-Verbose -Message "$($MyInvocation.MyCommand) : Invoke-RestMethod @$($Splatter | ConvertTo-Json -Compress)"
+	Invoke-RestMethod @Splatter
+}
+function Get-UserHomeFolder {
+	# https://api.sharefile.com/docs/resource?name=Users#Get_HomeFolder
+	[CmdletBinding()]
+	param (
+		[Parameter(Position = 0
+				,  ValueFromPipeline = $true
+				,  ValueFromPipelineByPropertyName = $true)]
+		[ValidateNotNullOrEmpty()]
+		[guid]
+		$Id
+	)
+	$Script:Token = Get-Token
+	$Header = @{
+		Authorization = "Bearer $($Script:Token.access_token)"
+	}
+	$Uri = "https://$($Script:Token.subdomain).$($Script:Token.apicp)/sf/v3/Users"
+	if ($Id) {
+		Write-Verbose -Message "$($MyInvocation.MyCommand) : Getting user by ID: $($Id)"
+		$Uri += "($($Id))"
+	}
+	$Uri += '/HomeFolder'
 	$Splatter = @{
 		ContentType = 'application/json'
 		Method = 'GET'
@@ -339,11 +676,11 @@ function Get-Item {
 		[switch]
 		$IncludeDeleted
 		,
-		[Parameter()]
+		[Parameter(ParameterSetName = 'Parent')]
 		[switch]
 		$Parent
 		,
-		[Parameter()]
+		[Parameter(ParameterSetName = 'Children')]
 		[switch]
 		$Children
 	)
@@ -364,6 +701,53 @@ function Get-Item {
 	if ($Path) {
 		$EscapedPath = [uri]::EscapeDataString($Path)
 		$Uri += "/ByPath?path=$($EscapedPath)"
+	}
+	$Splatter = @{
+		ContentType = 'application/json'
+		Method = 'GET'
+		Uri = $Uri
+		Header = $Header
+	}
+	if ($Script:Config.Proxy) {
+		$Splatter.Proxy = $Script:Config.Proxy
+	}
+	Write-Verbose -Message "$($MyInvocation.MyCommand) : Invoke-RestMethod @$($Splatter | ConvertTo-Json -Compress)"
+	Invoke-RestMethod @Splatter
+}
+function Get-Device {
+	# https://api.sharefile.com/docs/resource?name=Devices
+	[CmdletBinding()]
+	param (
+		# Get Device by ID
+		[Parameter(Position = 0
+				,  ValueFromPipeline = $true
+				,  ValueFromPipelineByPropertyName = $true)]
+		[ValidateNotNullOrEmpty()]
+		[guid]
+		$Id
+		,
+		# Get Devices for UserID
+		[Parameter()]
+		[ValidateNotNullOrEmpty()]
+		[guid]
+		$UserId
+	)
+	$Script:Token = Get-Token
+	$Header = @{
+		Authorization = "Bearer $($Script:Token.access_token)"
+	}
+	$Uri = "https://$($Script:Token.subdomain).$($Script:Token.apicp)/sf/v3"
+	if ($UserId) {
+		Write-Verbose -Message "$($MyInvocation.MyCommand) : Getting devices for UserID: $($UserId)"
+		$Uri += "/User($($UserId))/Devices"
+	}
+	elseif ($Id) {
+		Write-Verbose -Message "$($MyInvocation.MyCommand) : Getting device by ID: $($Id)"
+		$Uri += "/Devices($($Id))"
+	}
+	else {
+		Write-Verbose -Message "$($MyInvocation.MyCommand) : Getting devices for current user."
+		$Uri += "/Devices"
 	}
 	$Splatter = @{
 		ContentType = 'application/json'
@@ -454,6 +838,55 @@ function Remove-User {
 		if ($Script:Config.Proxy) {
 			$Splatter.Proxy = $Script:Config.Proxy
 		}
+		Write-Verbose -Message "$($MyInvocation.MyCommand) : Invoke-RestMethod @$($Splatter | ConvertTo-Json -Compress)"
+		Invoke-RestMethod @Splatter
+	}
+}
+function Remove-Client {
+	# https://api.sharefile.com/docs/resource?name=Users#Delete_multiple_client_users
+	[CmdletBinding(SupportsShouldProcess = $true
+				,  ConfirmImpact = 'High')]
+	param (
+		# GUID of the client to be deleted.
+		[Parameter(Mandatory = $true
+				,  Position = 0
+				,  ValueFromPipeline = $true
+				,  ValueFromPipelineByPropertyName = $true)]
+		[ValidateNotNullOrEmpty()]
+		[guid]
+		$Id
+		,
+		# Force remove. Don't ask for confirmation unless explicitly specified.
+		[Parameter()]
+		[switch]
+		$Force
+	)
+	$Script:Token = Get-Token
+	if ($Force -and !$Confirm) {
+		$ConfirmPreference = 'None'
+	}
+	$Header = @{
+		Authorization = "Bearer $($Script:Token.access_token)"
+	}
+	$Data = @{
+		UserIds = @($Id.Guid)
+	}
+	$Splatter = @{
+		ContentType = 'application/json'
+		#Method = 'DELETE'
+		#Uri = "https://$($Script:Token.subdomain).$($Script:Token.apicp)/sf/v3/Users/Clients"
+		Method = 'POST'
+		Uri = "https://$($Script:Token.subdomain).$($Script:Token.apicp)/sf/v3/Users/Clients/BulkDelete"
+		Header = $Header
+		Body = $Data | ConvertTo-Json -Compress
+	}
+	if ($Script:Config.Proxy) {
+		$Splatter.Proxy = $Script:Config.Proxy
+	}
+
+	$SfUser = Get-User -Id $Id
+	if ($PSCmdlet.ShouldProcess("'$($SfUser.FullName)' ($($SfUser.Username)) ($($SfUser.Id)).")) {
+		Write-Verbose -Message "$($MyInvocation.MyCommand) : Deleting user: '$($SfUser.FullName)' ($($SfUser.Username)) ($($SfUser.Id))."
 		Write-Verbose -Message "$($MyInvocation.MyCommand) : Invoke-RestMethod @$($Splatter | ConvertTo-Json -Compress)"
 		Invoke-RestMethod @Splatter
 	}
