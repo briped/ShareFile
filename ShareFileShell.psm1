@@ -1,3 +1,103 @@
+function Add-Credential {
+	[CmdletBinding(SupportsShouldProcess = $true)]
+	param(
+		# Credential to be added
+		[Parameter(Mandatory = $true)]
+		[ValidateNotNullOrEmpty()]
+		[pscredential]
+		$Credential
+		,
+		# Force add. Overwrite if exists. Don't ask for confirmation unless explicitly specified.
+		[Parameter()]
+		[switch]
+		$Force
+	)
+	if ($Force -and !$Confirm) {
+		$ConfirmPreference = 'None'
+	}
+	$EnvUser = if ($IsLinux) { 'USER' } else { 'USERNAME' }
+	$EnvName = if ($IsLinux) { 'NAME' } else { 'COMPUTERNAME' }
+	$HostUser = [System.Environment]::GetEnvironmentVariable($EnvUser)
+	$HostName = [System.Environment]::GetEnvironmentVariable($EnvName)
+	$UserHost = "$($HostUser)@$($HostName)"
+
+	Write-Verbose -Message "$($MyInvocation.MyCommand.Name) : Authenticating with user '$($Credential.UserName)' and password."
+	$Script:Token = Get-SfToken -Credential $Credential
+	if (!$Script:Token) {
+		Remove-Variable -Name Credential
+		Write-Error -Message "$($MyInvocation.MyCommand.Name) : Authentication failed using '$($Credential.UserName)' and password." -ErrorAction Stop
+	}
+
+	$UserHostCredential = New-Object -TypeName PSCustomObject -Property @{
+		Name = $UserHost
+		Credential = $Credential
+	}
+
+	if (!($Script:Config.PSObject.Properties | Where-Object { $_.Name -eq 'credentials' })) {
+		Write-Verbose -Message "$($MyInvocation.MyCommand.Name) : Creating credential array and adding credential."
+		$Script:Config | Add-Member -MemberType NoteProperty -Name credentials -Value @($UserHostCredential)
+		return $Script:Config
+	}
+	Write-Verbose -Message "$($MyInvocation.MyCommand.Name) : Checking for existing credentials for '$($UserHost)'."
+	$ExistingCredential = $Script:Config.credentials | Where-Object { $_.Name -eq $UserHost }
+
+	if (!$ExistingCredential) {
+		Write-Verbose -Message "$($MyInvocation.MyCommand.Name) : Adding '$($UserHostCredential.Credential.UserName)' in '$($UserHostCredential.Name)' to the configuration."
+		$Script:Config.credentials += $UserHostCredential
+		return $Script:Config
+	}
+	else {
+		Write-Warning -Message "$($MyInvocation.MyCommand.Name) : Credential for '$($UserHost)' already exists."
+		if ($Force) {
+			Write-Verbose -Message "$($MyInvocation.MyCommand.Name) : Updating credential for '$($UserHost)'."
+			$ExistingCredential.Credential = $Credential
+		}
+	}
+	$Script:Config
+}
+function Update-Credential {
+	[CmdletBinding()]
+	param(
+		# Credential to be updated
+		[Parameter(Mandatory = $true)]
+		[ValidateNotNullOrEmpty()]
+		[pscredential]
+		$Credential
+	)
+	Add-Credential -Credential $Credential -Force
+}
+function Remove-Credential {
+	[CmdletBinding(SupportsShouldProcess = $true)]
+	param(
+		# Credential to be removed
+		[Parameter()]
+		[string]
+		$Name
+		,
+		# Force remove. Don't ask for confirmation unless explicitly specified.
+		[Parameter()]
+		[switch]
+		$Force
+	)
+	if ($Force -and !$Confirm) {
+		$ConfirmPreference = 'None'
+	}
+	$EnvUser = if ($IsLinux) { 'USER' } else { 'USERNAME' }
+	$EnvName = if ($IsLinux) { 'NAME' } else { 'COMPUTERNAME' }
+	$HostUser = [System.Environment]::GetEnvironmentVariable($EnvUser)
+	$HostName = [System.Environment]::GetEnvironmentVariable($EnvName)
+	$UserHost = "$($HostUser)@$($HostName)"
+
+	if (!$Name) {
+		Write-Warning -Message "No credential name given. Using '$($UserHost)'."
+		$Name = $UserHost
+	}
+	if ($PSCmdlet.ShouldProcess($Name)) {
+		Write-Verbose -Message "Removing credential for '$($Name)'."
+		$Script:Config.credentials = $Script:Config.credentials | Where-Object { $_.Name -ne $Name }
+	}
+	$Script:Config
+}
 function Import-Config {
 	[CmdletBinding()]
 	param(
@@ -40,29 +140,34 @@ function Export-Config {
 function Get-Token {
 	[CmdletBinding()]
 	param (
+		# Company subdomain; f.ex. "MyCompany" is the subdomain of "MyCompany.sharefile.com"
 		[Parameter()]
 		[ValidateNotNullOrEmpty()]
 		[string]
 		$SubDomain
 		,
+		# ShareFile.com or ShareFile.eu. Part of the issued token.
 		[Parameter()]
 		[ValidateNotNullOrEmpty()]
 		[alias('appcp')]
 		[string]
 		$AppControlPlane
 		,
+		# The Client ID generated on api.sharefile.com
 		[Parameter()]
 		[ValidateNotNullOrEmpty()]
 		[Alias('client_id')]
 		[string]
 		$ClientID
 		,
+		# The Client Secret generated on api.sharefile.com
 		[Parameter()]
 		[ValidateNotNullOrEmpty()]
 		[Alias('client_secret')]
 		[string]
 		$ClientSecret
 		,
+		# A credential containing the username and password for accessing the API
 		[Parameter()]
 		[ValidateNotNullOrEmpty()]
 		[pscredential]
@@ -100,10 +205,10 @@ function Get-Token {
 		}
 		if (!$Script:Token.refresh_token) {
 			$UserHostCredential = $Script:Config.credentials | Where-Object { $_.Name -eq $UserHost }
-			if (!$Credential -and !$UserHostCredential.Value) {
+			if (!$Credential -and !$UserHostCredential.Credential) {
 				throw 'Required Credential is missing.'
 			}
-			$Credential = if ($Credential) { $Credential } else { $UserHostCredential.Value }
+			$Credential = if ($Credential) { $Credential } else { $UserHostCredential.Credential }
 
 			$BSTR = [System.Runtime.InteropServices.Marshal]::SecureStringToBSTR($Credential.Password)
 			$Secret = [System.Runtime.InteropServices.Marshal]::PtrToStringAuto($BSTR)
@@ -130,9 +235,11 @@ function Get-Token {
 		if ($Script:Config.Proxy) {
 			$Splatter.Proxy = $Script:Config.Proxy
 		}
-		Write-Verbose -Message "$($MyInvocation.MyCommand) : Invoke-RestMethod @$($Splatter | ConvertTo-Json -Compress)"
+		Write-Verbose -Message "$($MyInvocation.MyCommand.Name) : Invoke-RestMethod @$($Splatter | ConvertTo-Json -Compress)"
 		$Script:Token = Invoke-RestMethod @Splatter
-		$Script:Token | Add-Member -MemberType NoteProperty -Name 'expire_date' -Value (Get-Date).AddSeconds($Script:Token.expires_in).AddMinutes(-5)
+		if ($Script:Token -and !$Script:Token.expire_date) {
+			$Script:Token | Add-Member -MemberType NoteProperty -Name 'expire_date' -Value (Get-Date).AddSeconds($Script:Token.expires_in).AddMinutes(-5)
+		}
 	}
 	$Script:Token
 }
@@ -140,6 +247,7 @@ function Get-Account {
 	# https://api.sharefile.com/docs/resource?name=Accounts#Get_current_Account
 	[CmdletBinding()]
 	param (
+		# Account ID to get information about. Get all if no ID specified.
 		[Parameter()]
 		[string]
 		$Id
@@ -161,14 +269,13 @@ function Get-Account {
 	if ($Script:Config.Proxy) {
 		$Splatter.Proxy = $Script:Config.Proxy
 	}
-	Write-Verbose -Message "$($MyInvocation.MyCommand) : Invoke-RestMethod @$($Splatter | ConvertTo-Json -Compress)"
+	Write-Verbose -Message "$($MyInvocation.MyCommand.Name) : Invoke-RestMethod @$($Splatter | ConvertTo-Json -Compress)"
 	Invoke-RestMethod @Splatter
 }
 function Get-AccountPreference {
 	# https://api.sharefile.com/docs/resource?name=Accounts#Get_Account_Preferences
 	[CmdletBinding()]
-	param (
-	)
+	param ()
 	$Script:Token = Get-Token
 	$Header = @{
 		Authorization = "Bearer $($Script:Token.access_token)"
@@ -183,14 +290,13 @@ function Get-AccountPreference {
 	if ($Script:Config.Proxy) {
 		$Splatter.Proxy = $Script:Config.Proxy
 	}
-	Write-Verbose -Message "$($MyInvocation.MyCommand) : Invoke-RestMethod @$($Splatter | ConvertTo-Json -Compress)"
+	Write-Verbose -Message "$($MyInvocation.MyCommand.Name) : Invoke-RestMethod @$($Splatter | ConvertTo-Json -Compress)"
 	Invoke-RestMethod @Splatter
 }
 function Get-Branding {
 	# https://api.sharefile.com/docs/resource?name=Accounts#Get_current_Account_branding
 	[CmdletBinding()]
-	param (
-	)
+	param ()
 	$Script:Token = Get-Token
 	$Header = @{
 		Authorization = "Bearer $($Script:Token.access_token)"
@@ -205,7 +311,7 @@ function Get-Branding {
 	if ($Script:Config.Proxy) {
 		$Splatter.Proxy = $Script:Config.Proxy
 	}
-	Write-Verbose -Message "$($MyInvocation.MyCommand) : Invoke-RestMethod @$($Splatter | ConvertTo-Json -Compress)"
+	Write-Verbose -Message "$($MyInvocation.MyCommand.Name) : Invoke-RestMethod @$($Splatter | ConvertTo-Json -Compress)"
 	Invoke-RestMethod @Splatter
 }
 function Get-AccountSSO {
@@ -243,14 +349,14 @@ function Get-AccountSSO {
 	if ($Script:Config.Proxy) {
 		$Splatter.Proxy = $Script:Config.Proxy
 	}
-	Write-Verbose -Message "$($MyInvocation.MyCommand) : Invoke-RestMethod @$($Splatter | ConvertTo-Json -Compress)"
+	Write-Verbose -Message "$($MyInvocation.MyCommand.Name) : Invoke-RestMethod @$($Splatter | ConvertTo-Json -Compress)"
 	Invoke-RestMethod @Splatter
 }
-
 function Get-AccountSSOInfo {
 	# https://api.sharefile.com/docs/resource?name=Accounts#Get_SSO_Info
 	[CmdletBinding()]
 	param (
+		# Company subdomain; f.ex. "MyCompany" is the subdomain of "MyCompany.sharefile.com"
 		[Parameter(Mandatory = $true)]
 		[string]
 		$SubDomain
@@ -269,7 +375,7 @@ function Get-AccountSSOInfo {
 	if ($Script:Config.Proxy) {
 		$Splatter.Proxy = $Script:Config.Proxy
 	}
-	Write-Verbose -Message "$($MyInvocation.MyCommand) : Invoke-RestMethod @$($Splatter | ConvertTo-Json -Compress)"
+	Write-Verbose -Message "$($MyInvocation.MyCommand.Name) : Invoke-RestMethod @$($Splatter | ConvertTo-Json -Compress)"
 	Invoke-RestMethod @Splatter
 }
 function Get-AddressBook {
@@ -311,14 +417,13 @@ function Get-AddressBook {
 	if ($Script:Config.Proxy) {
 		$Splatter.Proxy = $Script:Config.Proxy
 	}
-	Write-Verbose -Message "$($MyInvocation.MyCommand) : Invoke-RestMethod @$($Splatter | ConvertTo-Json -Compress)"
+	Write-Verbose -Message "$($MyInvocation.MyCommand.Name) : Invoke-RestMethod @$($Splatter | ConvertTo-Json -Compress)"
 	Invoke-RestMethod @Splatter
 }
 function Get-Capability {
 	# https://api.sharefile.com/docs/resource?name=Capabilities
 	[CmdletBinding()]
-	param (
-	)
+	param ()
 	$Script:Token = Get-Token
 	$Header = @{
 		Authorization = "Bearer $($Script:Token.access_token)"
@@ -333,14 +438,13 @@ function Get-Capability {
 	if ($Script:Config.Proxy) {
 		$Splatter.Proxy = $Script:Config.Proxy
 	}
-	Write-Verbose -Message "$($MyInvocation.MyCommand) : Invoke-RestMethod @$($Splatter | ConvertTo-Json -Compress)"
+	Write-Verbose -Message "$($MyInvocation.MyCommand.Name) : Invoke-RestMethod @$($Splatter | ConvertTo-Json -Compress)"
 	Invoke-RestMethod @Splatter
 }
 function Get-Employee {
 	# https://api.sharefile.com/docs/resource?name=Accounts#Get_List_of_current_Account_Employees
 	[CmdletBinding()]
-	param (
-	)
+	param ()
 	$Script:Token = Get-Token
 	$Header = @{
 		Authorization = "Bearer $($Script:Token.access_token)"
@@ -355,14 +459,13 @@ function Get-Employee {
 	if ($Script:Config.Proxy) {
 		$Splatter.Proxy = $Script:Config.Proxy
 	}
-	Write-Verbose -Message "$($MyInvocation.MyCommand) : Invoke-RestMethod @$($Splatter | ConvertTo-Json -Compress)"
+	Write-Verbose -Message "$($MyInvocation.MyCommand.Name) : Invoke-RestMethod @$($Splatter | ConvertTo-Json -Compress)"
 	Invoke-RestMethod @Splatter
 }
 function Get-Client {
 	# https://api.sharefile.com/docs/resource?name=Accounts#Get_List_of_current_Account_Clients
 	[CmdletBinding()]
-	param (
-	)
+	param ()
 	$Script:Token = Get-Token
 	$Header = @{
 		Authorization = "Bearer $($Script:Token.access_token)"
@@ -377,7 +480,7 @@ function Get-Client {
 	if ($Script:Config.Proxy) {
 		$Splatter.Proxy = $Script:Config.Proxy
 	}
-	Write-Verbose -Message "$($MyInvocation.MyCommand) : Invoke-RestMethod @$($Splatter | ConvertTo-Json -Compress)"
+	Write-Verbose -Message "$($MyInvocation.MyCommand.Name) : Invoke-RestMethod @$($Splatter | ConvertTo-Json -Compress)"
 	Invoke-RestMethod @Splatter
 }
 function Get-Zone {
@@ -385,6 +488,7 @@ function Get-Zone {
 	# https://api.sharefile.com/docs/resource?name=Zones#Get_Zone_by_ID
 	[CmdletBinding(DefaultParameterSetName = 'Default')]
 	param (
+		# Zone identifier
 		[Parameter(ParameterSetName = 'Id'
 				,  Mandatory = $true
 				,  Position = 0
@@ -393,9 +497,10 @@ function Get-Zone {
 		[string]
 		$Id
 		,
+		# Include "disabled" zones - zones without an associated enabled storagecenter. Defaults to off.
 		[Parameter(ParameterSetName = 'Default')]
 		[switch]
-		$IncludeDisabled
+		$Disabled
 		,
 		[Parameter(ParameterSetName = 'Id')]
 		[switch]
@@ -411,7 +516,7 @@ function Get-Zone {
 		$Uri += "?secret=$($Secret)"
 	}
 	else {
-		$Uri += "?includeDisabled=$($IncludeDisabled)"
+		$Uri += "?includeDisabled=$($Disabled)"
 	}
 	$Splatter = @{
 		ContentType = 'application/json'
@@ -422,236 +527,314 @@ function Get-Zone {
 	if ($Script:Config.Proxy) {
 		$Splatter.Proxy = $Script:Config.Proxy
 	}
-	Write-Verbose -Message "$($MyInvocation.MyCommand) : Invoke-RestMethod @$($Splatter | ConvertTo-Json -Compress)"
+	Write-Verbose -Message "$($MyInvocation.MyCommand.Name) : Invoke-RestMethod @$($Splatter | ConvertTo-Json -Compress)"
 	Invoke-RestMethod @Splatter
 }
 function Get-User {
 	# https://api.sharefile.com/docs/resource?name=Users#Get_User
 	[CmdletBinding(DefaultParameterSetName = 'Id')]
 	param (
+		# User ID to lookup
 		[Parameter(ParameterSetName = 'Id'
 				,  Position = 0
 				,  ValueFromPipeline = $true
 				,  ValueFromPipelineByPropertyName = $true)]
 		[ValidateNotNullOrEmpty()]
-		[guid]
+		[string]
 		$Id
 		,
+		# User email address to lookup
 		[Parameter(ParameterSetName = 'Email')]
 		[ValidateNotNullOrEmpty()]
 		[ValidatePattern('^[\w-\.]+@([a-z0-9-]+\.)+[a-z0-9-]{2,4}$')]
 		[string]
 		$Email
 	)
-	$Script:Token = Get-Token
-	$Header = @{
-		Authorization = "Bearer $($Script:Token.access_token)"
+	begin {
+		$Script:Token = Get-Token
+		$Header = @{
+			Authorization = "Bearer $($Script:Token.access_token)"
+		}
 	}
-	$Uri = "https://$($Script:Token.subdomain).$($Script:Token.apicp)/sf/v3/Users"
-	if ($Id) {
-		Write-Verbose -Message "$($MyInvocation.MyCommand) : Getting user by ID: $($Id)"
-		$Uri += "($($Id))"
+	process {
+		$Uri = "https://$($Script:Token.subdomain).$($Script:Token.apicp)/sf/v3/Users"
+		if ($Id) {
+			Write-Verbose -Message "$($MyInvocation.MyCommand.Name) : Getting user by ID: $($Id)"
+			$Uri += "($($Id))"
+		}
+		elseif ($PSCmdlet.ParameterSetName -eq 'Email') {
+			Write-Verbose -Message "$($MyInvocation.MyCommand.Name) : Getting user by email: $($Email)"
+			$Uri += "?emailaddress=$($Email)"
+		}
+		else {
+			Write-Verbose -Message "$($MyInvocation.MyCommand.Name) : Getting current user."
+		}
+		$Splatter = @{
+			ContentType = 'application/json'
+			Method = 'GET'
+			Uri = $Uri
+			Header = $Header
+		}
+		if ($Script:Config.Proxy) {
+			$Splatter.Proxy = $Script:Config.Proxy
+		}
+		Write-Verbose -Message "$($MyInvocation.MyCommand.Name) : Invoke-RestMethod @$($Splatter | ConvertTo-Json -Compress)"
+		Invoke-RestMethod @Splatter
 	}
-	elseif ($PSCmdlet.ParameterSetName -eq 'Email') {
-		Write-Verbose -Message "$($MyInvocation.MyCommand) : Getting user by email: $($Email)"
-		$Uri += "?emailaddress=$($Email)"
-	}
-	else {
-		Write-Verbose -Message "$($MyInvocation.MyCommand) : Getting current user."
-	}
-	$Splatter = @{
-		ContentType = 'application/json'
-		Method = 'GET'
-		Uri = $Uri
-		Header = $Header
-	}
-	if ($Script:Config.Proxy) {
-		$Splatter.Proxy = $Script:Config.Proxy
-	}
-	Write-Verbose -Message "$($MyInvocation.MyCommand) : Invoke-RestMethod @$($Splatter | ConvertTo-Json -Compress)"
-	Invoke-RestMethod @Splatter
 }
-function Get-UserInfo {
-	# https://api.sharefile.com/docs/resource?name=Users#Get_Current_User_Info
+function Set-User {
+	# https://api.sharefile.com/docs/resource?name=Users#Update_User
 	[CmdletBinding()]
 	param (
-		[Parameter(Position = 0
+		# User ID to update
+		[Parameter(Mandatory = $true
+				,  Position = 0
 				,  ValueFromPipeline = $true
 				,  ValueFromPipelineByPropertyName = $true)]
 		[ValidateNotNullOrEmpty()]
-		[guid]
+		[string]
 		$Id
+		,
+		[Parameter()]
+		[ValidatePattern('^[\w-\.]+@([a-z0-9-]+\.)+[a-z0-9-]{2,4}$')]
+		[ValidateNotNullOrEmpty()]
+		[string]
+		$Email
+		,
+		[Parameter()]
+		[ValidateNotNullOrEmpty()]
+		[string]
+		$Username
 	)
 	$Script:Token = Get-Token
 	$Header = @{
 		Authorization = "Bearer $($Script:Token.access_token)"
 	}
-	$Uri = "https://$($Script:Token.subdomain).$($Script:Token.apicp)/sf/v3/Users"
-	if ($Id) {
-		Write-Verbose -Message "$($MyInvocation.MyCommand) : Getting user's info by ID: $($Id)"
-		$Uri += "($($Id))"
+	$Uri = "https://$($Script:Token.subdomain).$($Script:Token.apicp)/sf/v3/Users($Id)"
+	$Data = @{
+		Email = $Email
+		Username = $Username
 	}
-	else {
-		Write-Verbose -Message "$($MyInvocation.MyCommand) : Getting current user's info."
-	}
-	$Uri += '/Info'
 	$Splatter = @{
 		ContentType = 'application/json'
-		Method = 'GET'
+		Method = 'PATCH'
 		Uri = $Uri
 		Header = $Header
+		Body = $Data | ConvertTo-Json -Compress
 	}
 	if ($Script:Config.Proxy) {
 		$Splatter.Proxy = $Script:Config.Proxy
 	}
-	Write-Verbose -Message "$($MyInvocation.MyCommand) : Invoke-RestMethod @$($Splatter | ConvertTo-Json -Compress)"
+	Write-Verbose -Message "$($MyInvocation.MyCommand.Name) : Invoke-RestMethod @$($Splatter | ConvertTo-Json -Compress)"
 	Invoke-RestMethod @Splatter
+}
+function Get-UserSecurity {
+	# https://api.sharefile.com/docs/resource?name=Users#Get_User_Security
+	[CmdletBinding()]
+	param (
+		# User ID to lookup
+		[Parameter(Position = 0
+				,  ValueFromPipeline = $true
+				,  ValueFromPipelineByPropertyName = $true)]
+		[ValidateNotNullOrEmpty()]
+		[string]
+		$Id
+	)
+	begin {
+		$Script:Token = Get-Token
+		$Header = @{
+			Authorization = "Bearer $($Script:Token.access_token)"
+		}
+	}
+	process {
+		$Uri = "https://$($Script:Token.subdomain).$($Script:Token.apicp)/sf/v3/Users"
+		if ($Id) {
+			Write-Verbose -Message "$($MyInvocation.MyCommand.Name) : Getting user's securityinfo by ID: $($Id)"
+			$Uri += "($($Id))"
+		}
+		else {
+			Write-Verbose -Message "$($MyInvocation.MyCommand.Name) : Getting current user's securityinfo."
+		}
+		$Uri += '/Security'
+		$Splatter = @{
+			ContentType = 'application/json'
+			Method = 'GET'
+			Uri = $Uri
+			Header = $Header
+		}
+		if ($Script:Config.Proxy) {
+			$Splatter.Proxy = $Script:Config.Proxy
+		}
+		Write-Verbose -Message "$($MyInvocation.MyCommand.Name) : Invoke-RestMethod @$($Splatter | ConvertTo-Json -Compress)"
+		Invoke-RestMethod @Splatter
+	}
 }
 function Get-UserPreference {
 	# https://api.sharefile.com/docs/resource?name=Users#Get_User_Preferences
 	[CmdletBinding()]
 	param (
+		# User ID to lookup
 		[Parameter(Position = 0
 				,  ValueFromPipeline = $true
 				,  ValueFromPipelineByPropertyName = $true)]
 		[ValidateNotNullOrEmpty()]
-		[guid]
+		[string]
 		$Id
 	)
-	$Script:Token = Get-Token
-	$Header = @{
-		Authorization = "Bearer $($Script:Token.access_token)"
+	begin {
+		$Script:Token = Get-Token
+		$Header = @{
+			Authorization = "Bearer $($Script:Token.access_token)"
+		}
 	}
-	$Uri = "https://$($Script:Token.subdomain).$($Script:Token.apicp)/sf/v3/Users"
-	if ($Id) {
-		Write-Verbose -Message "$($MyInvocation.MyCommand) : Getting user preferences by ID: $($Id)"
-		$Uri += "($($Id))"
+	process {
+		$Uri = "https://$($Script:Token.subdomain).$($Script:Token.apicp)/sf/v3/Users"
+		if ($Id) {
+			Write-Verbose -Message "$($MyInvocation.MyCommand.Name) : Getting user preferences by ID: $($Id)"
+			$Uri += "($($Id))"
+		}
+		else {
+			Write-Verbose -Message "$($MyInvocation.MyCommand.Name) : Getting current user preferences."
+		}
+		$Uri += "/Preferences"
+		$Splatter = @{
+			ContentType = 'application/json'
+			Method = 'GET'
+			Uri = $Uri
+			Header = $Header
+		}
+		if ($Script:Config.Proxy) {
+			$Splatter.Proxy = $Script:Config.Proxy
+		}
+		Write-Verbose -Message "$($MyInvocation.MyCommand.Name) : Invoke-RestMethod @$($Splatter | ConvertTo-Json -Compress)"
+		Invoke-RestMethod @Splatter
 	}
-	else {
-		Write-Verbose -Message "$($MyInvocation.MyCommand) : Getting current user preferences."
-	}
-	$Uri += "/Preferences"
-	$Splatter = @{
-		ContentType = 'application/json'
-		Method = 'GET'
-		Uri = $Uri
-		Header = $Header
-	}
-	if ($Script:Config.Proxy) {
-		$Splatter.Proxy = $Script:Config.Proxy
-	}
-	Write-Verbose -Message "$($MyInvocation.MyCommand) : Invoke-RestMethod @$($Splatter | ConvertTo-Json -Compress)"
-	Invoke-RestMethod @Splatter
 }
 function Get-UserSharedFolders {
 	# https://api.sharefile.com/docs/resource?name=Users#Get_List_of_User_Shared_Folders
 	[CmdletBinding()]
 	param (
+		# User ID to lookup
 		[Parameter(Position = 0
 				,  ValueFromPipeline = $true
 				,  ValueFromPipelineByPropertyName = $true)]
 		[ValidateNotNullOrEmpty()]
-		[guid]
+		[string]
 		$Id
 	)
-	$Script:Token = Get-Token
-	$Header = @{
-		Authorization = "Bearer $($Script:Token.access_token)"
+	begin {
+		$Script:Token = Get-Token
+		$Header = @{
+			Authorization = "Bearer $($Script:Token.access_token)"
+		}
 	}
-	$Uri = "https://$($Script:Token.subdomain).$($Script:Token.apicp)/sf/v3/Users"
-	if ($Id) {
-		Write-Verbose -Message "$($MyInvocation.MyCommand) : Getting user's shared folders by ID: $($Id)"
-		$Uri += "($($Id))"
+	process {
+		$Uri = "https://$($Script:Token.subdomain).$($Script:Token.apicp)/sf/v3/Users"
+		if ($Id) {
+			Write-Verbose -Message "$($MyInvocation.MyCommand.Name) : Getting user's shared folders by ID: $($Id)"
+			$Uri += "($($Id))"
+		}
+		else {
+			Write-Verbose -Message "$($MyInvocation.MyCommand.Name) : Getting current user's shared folders."
+		}
+		$Uri += "/AllSharedFolders"
+		$Splatter = @{
+			ContentType = 'application/json'
+			Method = 'GET'
+			Uri = $Uri
+			Header = $Header
+		}
+		if ($Script:Config.Proxy) {
+			$Splatter.Proxy = $Script:Config.Proxy
+		}
+		Write-Verbose -Message "$($MyInvocation.MyCommand.Name) : Invoke-RestMethod @$($Splatter | ConvertTo-Json -Compress)"
+		Invoke-RestMethod @Splatter
 	}
-	else {
-		Write-Verbose -Message "$($MyInvocation.MyCommand) : Getting current user's shared folders."
-	}
-	$Uri += "/AllSharedFolders"
-	$Splatter = @{
-		ContentType = 'application/json'
-		Method = 'GET'
-		Uri = $Uri
-		Header = $Header
-	}
-	if ($Script:Config.Proxy) {
-		$Splatter.Proxy = $Script:Config.Proxy
-	}
-	Write-Verbose -Message "$($MyInvocation.MyCommand) : Invoke-RestMethod @$($Splatter | ConvertTo-Json -Compress)"
-	Invoke-RestMethod @Splatter
 }
 function Get-UserFileBox {
 	# https://api.sharefile.com/docs/resource?name=Users#Get_User's_FileBox_folder
 	[CmdletBinding()]
 	param (
-		[Parameter(Position = 0
+		# User ID to lookup
+		[Parameter(Mandatory = $true
+				,  Position = 0
 				,  ValueFromPipeline = $true
 				,  ValueFromPipelineByPropertyName = $true)]
 		[ValidateNotNullOrEmpty()]
-		[guid]
+		[string]
 		$Id
 		,
 		[Parameter()]
 		[switch]
 		$Children
 	)
-	$Script:Token = Get-Token
-	$Header = @{
-		Authorization = "Bearer $($Script:Token.access_token)"
+	begin {
+		$Script:Token = Get-Token
+		$Header = @{
+			Authorization = "Bearer $($Script:Token.access_token)"
+		}
 	}
-	if (!$Id) {
-		$Id = (Get-User).Id
+	process {
+		if (!$Id) {
+			$Id = (Get-User).Id
+		}
+		$Uri = "https://$($Script:Token.subdomain).$($Script:Token.apicp)/sf/v3/Users($($Id))"
+		if ($Children) {
+			$Uri += '/Box'
+		}
+		else {
+			$Uri += '/FileBox'
+		}
+		$Splatter = @{
+			ContentType = 'application/json'
+			Method = 'GET'
+			Uri = $Uri
+			Header = $Header
+		}
+		if ($Script:Config.Proxy) {
+			$Splatter.Proxy = $Script:Config.Proxy
+		}
+		Write-Verbose -Message "$($MyInvocation.MyCommand.Name) : Invoke-RestMethod @$($Splatter | ConvertTo-Json -Compress)"
+		Invoke-RestMethod @Splatter
 	}
-	$Uri = "https://$($Script:Token.subdomain).$($Script:Token.apicp)/sf/v3/Users($($Id))"
-	if ($Children) {
-		$Uri += '/Box'
-	}
-	else {
-		$Uri += '/FileBox'
-	}
-	$Splatter = @{
-		ContentType = 'application/json'
-		Method = 'GET'
-		Uri = $Uri
-		Header = $Header
-	}
-	if ($Script:Config.Proxy) {
-		$Splatter.Proxy = $Script:Config.Proxy
-	}
-	Write-Verbose -Message "$($MyInvocation.MyCommand) : Invoke-RestMethod @$($Splatter | ConvertTo-Json -Compress)"
-	Invoke-RestMethod @Splatter
 }
 function Get-UserHomeFolder {
 	# https://api.sharefile.com/docs/resource?name=Users#Get_HomeFolder
 	[CmdletBinding()]
 	param (
+		# User ID to lookup
 		[Parameter(Position = 0
 				,  ValueFromPipeline = $true
 				,  ValueFromPipelineByPropertyName = $true)]
 		[ValidateNotNullOrEmpty()]
-		[guid]
+		[string]
 		$Id
 	)
-	$Script:Token = Get-Token
-	$Header = @{
-		Authorization = "Bearer $($Script:Token.access_token)"
+	begin {
+		$Script:Token = Get-Token
+		$Header = @{
+			Authorization = "Bearer $($Script:Token.access_token)"
+		}
 	}
-	$Uri = "https://$($Script:Token.subdomain).$($Script:Token.apicp)/sf/v3/Users"
-	if ($Id) {
-		Write-Verbose -Message "$($MyInvocation.MyCommand) : Getting user by ID: $($Id)"
-		$Uri += "($($Id))"
+	process {
+		$Uri = "https://$($Script:Token.subdomain).$($Script:Token.apicp)/sf/v3/Users"
+		if ($Id) {
+			Write-Verbose -Message "$($MyInvocation.MyCommand.Name) : Getting user by ID: $($Id)"
+			$Uri += "($($Id))"
+		}
+		$Uri += '/HomeFolder'
+		$Splatter = @{
+			ContentType = 'application/json'
+			Method = 'GET'
+			Uri = $Uri
+			Header = $Header
+		}
+		if ($Script:Config.Proxy) {
+			$Splatter.Proxy = $Script:Config.Proxy
+		}
+		Write-Verbose -Message "$($MyInvocation.MyCommand.Name) : Invoke-RestMethod @$($Splatter | ConvertTo-Json -Compress)"
+		Invoke-RestMethod @Splatter
 	}
-	$Uri += '/HomeFolder'
-	$Splatter = @{
-		ContentType = 'application/json'
-		Method = 'GET'
-		Uri = $Uri
-		Header = $Header
-	}
-	if ($Script:Config.Proxy) {
-		$Splatter.Proxy = $Script:Config.Proxy
-	}
-	Write-Verbose -Message "$($MyInvocation.MyCommand) : Invoke-RestMethod @$($Splatter | ConvertTo-Json -Compress)"
-	Invoke-RestMethod @Splatter
 }
 function Get-Item {
 	# https://api.sharefile.com/docs/resource?name=Items#Get_HomeFolder_for_Current_User
@@ -662,46 +845,108 @@ function Get-Item {
 	# https://api.sharefile.com/docs/resource?name=Items#Get_Children
 	[CmdletBinding()]
 	param (
+		# Item identifier
 		[Parameter(Position = 0
 				,  ValueFromPipeline = $true
 				,  ValueFromPipelineByPropertyName = $true)]
 		[string]
 		$Id
 		,
+		# Path to retrieve
 		[Parameter()]
 		[string]
 		$Path
 		,
+		# Specifies whether or not the list of items returned should include deleted children
 		[Parameter()]
 		[switch]
-		$IncludeDeleted
+		$Deleted
 		,
-		[Parameter(ParameterSetName = 'Parent')]
+		# Returns: the Parent Item of the give object ID.
+		[Parameter()]
 		[switch]
 		$Parent
 		,
-		[Parameter(ParameterSetName = 'Children')]
+		# Returns: the list of children under the given object ID
+		[Parameter()]
 		[switch]
 		$Children
+	)
+	begin {
+		$Script:Token = Get-Token
+		$Header = @{
+			Authorization = "Bearer $($Script:Token.access_token)"
+		}
+	}
+	process {
+		$Uri = "https://$($Script:Token.subdomain).$($Script:Token.apicp)/sf/v3/Items"
+		if ($Id) {
+			$Uri += "($($Id))"
+			if ($Children) {
+				$Uri += '/Children'
+			}
+			elseif ($Parent) {
+				$Uri += '/Parent'
+			}
+		}
+		if ($Path) {
+			$EscapedPath = [uri]::EscapeDataString($Path)
+			$Uri += "/ByPath?path=$($EscapedPath)"
+		}
+		$Splatter = @{
+			ContentType = 'application/json'
+			Method = 'GET'
+			Uri = $Uri
+			Header = $Header
+		}
+		if ($Script:Config.Proxy) {
+			$Splatter.Proxy = $Script:Config.Proxy
+		}
+		Write-Verbose -Message "$($MyInvocation.MyCommand.Name) : Invoke-RestMethod @$($Splatter | ConvertTo-Json -Compress)"
+		Invoke-RestMethod @Splatter
+	}
+}
+function Download-Item {
+	# https://api.sharefile.com/docs/resource?name=Items#Download_Item_Content
+	[CmdletBinding()]
+	param (
+		# Item identifier
+		[Parameter(Position = 0
+				,  ValueFromPipeline = $true
+				,  ValueFromPipelineByPropertyName = $true)]
+		[string]
+		$Id
+		,
+		# Redirect to download link if set to true (default), or return a DownloadSpecification object if set to false
+		[Parameter()]
+		[switch]
+		$Redirect
+		,
+		# For folder downloads only, includes old versions of files in the folder in the zip when true, current versions only when false (default)
+		[Parameter()]
+		[switch]
+		$AllVersions
+		,
+		# For FINRA or other archive enabled account only, Super User can set includeDelete=true to download archived item. The default value of includeDeleted is false
+		[Parameter()]
+		[switch]
+		$Deleted
 	)
 	$Script:Token = Get-Token
 	$Header = @{
 		Authorization = "Bearer $($Script:Token.access_token)"
 	}
-	$Uri = "https://$($Script:Token.subdomain).$($Script:Token.apicp)/sf/v3/Items"
-	if ($Id) {
-		$Uri += "($($Id))"
-		if ($Children) {
-			$Uri += '/Children'
-		}
-		elseif ($Parent) {
-			$Uri += '/Parent'
-		}
+	$Uri = "https://$($Script:Token.subdomain).$($Script:Token.apicp)/sf/v3/Items($($Id))/Download?"
+	$Data = @{
+		redirect = $Redirect
+		includeAllVersions = $AllVersions
+		includeDeleted = $Deleted
 	}
-	if ($Path) {
-		$EscapedPath = [uri]::EscapeDataString($Path)
-		$Uri += "/ByPath?path=$($EscapedPath)"
+	$Query = @()
+	foreach ($k in $Data.Keys) {
+		$Query += "$($k)=$($Data[$k])"
 	}
+	$Uri += $Query -join '&'
 	$Splatter = @{
 		ContentType = 'application/json'
 		Method = 'GET'
@@ -711,7 +956,52 @@ function Get-Item {
 	if ($Script:Config.Proxy) {
 		$Splatter.Proxy = $Script:Config.Proxy
 	}
-	Write-Verbose -Message "$($MyInvocation.MyCommand) : Invoke-RestMethod @$($Splatter | ConvertTo-Json -Compress)"
+	Write-Verbose -Verbose -Message "$($MyInvocation.MyCommand.Name) : Invoke-RestMethod @$($Splatter | ConvertTo-Json -Compress)"
+	Invoke-WebRequest @Splatter
+}
+function Get-AccessControl {
+	# https://api.sharefile.com/docs/resource?name=AccessControls
+	[CmdletBinding()]
+	param (
+		# Item Identifier
+		[Parameter(Mandatory = $true
+				,  Position = 0
+				,  ValueFromPipeline = $true
+				,  ValueFromPipelineByPropertyName = $true)]
+		[Alias('Item', 'ItemId')]
+		[string]
+		$Id
+		,
+		# Principal Identifier
+		[Parameter(Position = 1
+				,  ValueFromPipeline = $true
+				,  ValueFromPipelineByPropertyName = $true)]
+		[Alias('User', 'UserId')]
+		[string]
+		$Principal
+	)
+	$Script:Token = Get-Token
+	$Header = @{
+		Authorization = "Bearer $($Script:Token.access_token)"
+	}
+	$Uri = "https://$($Script:Token.subdomain).$($Script:Token.apicp)/sf/v3"
+	if ($Principal) {
+		$Uri += "/AccessControls(principalid=$($Principal),itemid=$($Id))"
+	}
+	else {
+		$Uri += "/Items($($Id))/AccessControls"
+	}
+
+	$Splatter = @{
+		ContentType = 'application/json'
+		Method = 'GET'
+		Uri = $Uri
+		Header = $Header
+	}
+	if ($Script:Config.Proxy) {
+		$Splatter.Proxy = $Script:Config.Proxy
+	}
+	Write-Verbose -Message "$($MyInvocation.MyCommand.Name) : Invoke-RestMethod @$($Splatter | ConvertTo-Json -Compress)"
 	Invoke-RestMethod @Splatter
 }
 function Get-Device {
@@ -723,13 +1013,13 @@ function Get-Device {
 				,  ValueFromPipeline = $true
 				,  ValueFromPipelineByPropertyName = $true)]
 		[ValidateNotNullOrEmpty()]
-		[guid]
+		[string]
 		$Id
 		,
 		# Get Devices for UserID
 		[Parameter()]
 		[ValidateNotNullOrEmpty()]
-		[guid]
+		[string]
 		$UserId
 	)
 	$Script:Token = Get-Token
@@ -738,15 +1028,15 @@ function Get-Device {
 	}
 	$Uri = "https://$($Script:Token.subdomain).$($Script:Token.apicp)/sf/v3"
 	if ($UserId) {
-		Write-Verbose -Message "$($MyInvocation.MyCommand) : Getting devices for UserID: $($UserId)"
+		Write-Verbose -Message "$($MyInvocation.MyCommand.Name) : Getting devices for UserID: $($UserId)"
 		$Uri += "/User($($UserId))/Devices"
 	}
 	elseif ($Id) {
-		Write-Verbose -Message "$($MyInvocation.MyCommand) : Getting device by ID: $($Id)"
+		Write-Verbose -Message "$($MyInvocation.MyCommand.Name) : Getting device by ID: $($Id)"
 		$Uri += "/Devices($($Id))"
 	}
 	else {
-		Write-Verbose -Message "$($MyInvocation.MyCommand) : Getting devices for current user."
+		Write-Verbose -Message "$($MyInvocation.MyCommand.Name) : Getting devices for current user."
 		$Uri += "/Devices"
 	}
 	$Splatter = @{
@@ -758,7 +1048,7 @@ function Get-Device {
 	if ($Script:Config.Proxy) {
 		$Splatter.Proxy = $Script:Config.Proxy
 	}
-	Write-Verbose -Message "$($MyInvocation.MyCommand) : Invoke-RestMethod @$($Splatter | ConvertTo-Json -Compress)"
+	Write-Verbose -Message "$($MyInvocation.MyCommand.Name) : Invoke-RestMethod @$($Splatter | ConvertTo-Json -Compress)"
 	Invoke-RestMethod @Splatter
 }
 function Remove-User {
@@ -773,22 +1063,22 @@ function Remove-User {
 				,  ValueFromPipeline = $true
 				,  ValueFromPipelineByPropertyName = $true)]
 		[ValidateNotNullOrEmpty()]
-		[guid]
+		[string]
 		$Id
 		,
 		# Combined ReassignItemsTo and ReassignGroupsTo. If set, all user item and group records will be reassigned to the user provided.
 		[Parameter(ParameterSetName = 'ReassignAll')]
-		[guid]
+		[string]
 		$ReassignTo
 		,
 		# If set, all user item records will be reassigned to the user provided.
 		[Parameter(ParameterSetName = 'Reassign')]
-		[guid]
+		[string]
 		$ReassignItemsTo
 		,
 		# If set, all user group records will be reassigned to the user provided.
 		[Parameter(ParameterSetName = 'Reassign')]
-		[guid]
+		[string]
 		$ReassignGroupsTo
 		,
 		# If set, all user records will be removed. Otherwise, the user will be disabled, but not removed from the system. A complete removal is not recoverable.
@@ -801,45 +1091,54 @@ function Remove-User {
 		[switch]
 		$Force
 	)
-	$Script:Token = Get-Token
-	if ($Force -and !$Confirm) {
-		$ConfirmPreference = 'None'
-	}
-	$Header = @{
-		Authorization = "Bearer $($Script:Token.access_token)"
-	}
-	$Data = @{
-		completely = $Completely
-	}
-	if ($ReassignTo) {
-		$ReassignUser = Get-User -Id $ReassignTo
-		if (!$ReassignUser) {
-			throw 'ReassignTo user does not exist.'
+	begin {
+		$Script:Token = Get-Token
+		if ($Force -and !$Confirm) {
+			$ConfirmPreference = 'None'
 		}
-		Write-Verbose -Message "$($MyInvocation.MyCommand) : Reassigning to: '$($ReassignUser.FullName)' ($($ReassignUser.Username)) ($($ReassignUser.Id))."
-		$Data.itemsReassignTo = $ReassignTo
-		$Data.groupsReassignTo = $ReassignTo
-	}
-	$Query = @()
-	foreach ($k in $Data.Keys) {
-		$Query += "$($k)=$($Data[$k])"
-	}
-	$Uri = "https://$($Script:Token.subdomain).$($Script:Token.apicp)/sf/v3/Users($($Id))?"
-	$Uri += $Query -join '&'
-	$SfUser = Get-User -Id $Id
-	if ($PSCmdlet.ShouldProcess("'$($SfUser.FullName)' ($($SfUser.Username)) ($($SfUser.Id)).")) {
-		Write-Verbose -Message "$($MyInvocation.MyCommand) : Deleting user: '$($SfUser.FullName)' ($($SfUser.Username)) ($($SfUser.Id))."
-		$Splatter = @{
-			ContentType = 'application/json'
-			Method = 'DELETE'
-			Uri = $Uri
-			Header = $Header
+		$Header = @{
+			Authorization = "Bearer $($Script:Token.access_token)"
 		}
-		if ($Script:Config.Proxy) {
-			$Splatter.Proxy = $Script:Config.Proxy
+		$Data = @{
+			completely = $Completely
 		}
-		Write-Verbose -Message "$($MyInvocation.MyCommand) : Invoke-RestMethod @$($Splatter | ConvertTo-Json -Compress)"
-		Invoke-RestMethod @Splatter
+		if ($ReassignTo) {
+			$ReassignUser = Get-User -Id $ReassignTo
+			if (!$ReassignUser) {
+				throw 'ReassignTo user does not exist.'
+			}
+			Write-Verbose -Message "$($MyInvocation.MyCommand.Name) : Reassigning to: '$($ReassignUser.FullName)' ($($ReassignUser.Username)) ($($ReassignUser.Id))."
+			$Data.itemsReassignTo = $ReassignTo
+			$Data.groupsReassignTo = $ReassignTo
+		}
+	}
+	process {
+		$Query = @()
+		foreach ($k in $Data.Keys) {
+			$Query += "$($k)=$($Data[$k])"
+		}
+		$Uri = "https://$($Script:Token.subdomain).$($Script:Token.apicp)/sf/v3/Users($($Id))?"
+		$Uri += $Query -join '&'
+		$SfUser = Get-User -Id $Id
+		if ($PSCmdlet.ShouldProcess("'$($SfUser.FullName)' ($($SfUser.Username)) ($($SfUser.Id)).")) {
+			Write-Verbose -Message "$($MyInvocation.MyCommand.Name) : Deleting user: '$($SfUser.FullName)' ($($SfUser.Username)) ($($SfUser.Id))."
+			$Splatter = @{
+				ContentType = 'application/json'
+				Method = 'DELETE'
+				Uri = $Uri
+				Header = $Header
+			}
+			if ($Script:Config.Proxy) {
+				$Splatter.Proxy = $Script:Config.Proxy
+			}
+			try {
+				Write-Verbose -Message "$($MyInvocation.MyCommand.Name) : Invoke-RestMethod @$($Splatter | ConvertTo-Json -Compress)"
+				$Response = Invoke-RestMethod @Splatter
+			}
+			catch {
+				Write-Error -Message "$($MyInvocation.MyCommand.Name) : ERROR : Deleting user: '$($SfUser.FullName)' ($($SfUser.Username)) ($($SfUser.Id))." + $Error
+			}
+		}
 	}
 }
 function Remove-Client {
@@ -853,7 +1152,7 @@ function Remove-Client {
 				,  ValueFromPipeline = $true
 				,  ValueFromPipelineByPropertyName = $true)]
 		[ValidateNotNullOrEmpty()]
-		[guid]
+		[string]
 		$Id
 		,
 		# Force remove. Don't ask for confirmation unless explicitly specified.
@@ -869,7 +1168,7 @@ function Remove-Client {
 		Authorization = "Bearer $($Script:Token.access_token)"
 	}
 	$Data = @{
-		UserIds = @($Id.Guid)
+		UserIds = @($Id)
 	}
 	$Splatter = @{
 		ContentType = 'application/json'
@@ -886,8 +1185,8 @@ function Remove-Client {
 
 	$SfUser = Get-User -Id $Id
 	if ($PSCmdlet.ShouldProcess("'$($SfUser.FullName)' ($($SfUser.Username)) ($($SfUser.Id)).")) {
-		Write-Verbose -Message "$($MyInvocation.MyCommand) : Deleting user: '$($SfUser.FullName)' ($($SfUser.Username)) ($($SfUser.Id))."
-		Write-Verbose -Message "$($MyInvocation.MyCommand) : Invoke-RestMethod @$($Splatter | ConvertTo-Json -Compress)"
+		Write-Verbose -Message "$($MyInvocation.MyCommand.Name) : Deleting user: '$($SfUser.FullName)' ($($SfUser.Username)) ($($SfUser.Id))."
+		Write-Verbose -Message "$($MyInvocation.MyCommand.Name) : Invoke-RestMethod @$($Splatter | ConvertTo-Json -Compress)"
 		Invoke-RestMethod @Splatter
 	}
 }
@@ -903,22 +1202,22 @@ function Revoke-Employee {
 				,  ValueFromPipeline = $true
 				,  ValueFromPipelineByPropertyName = $true)]
 		[ValidateNotNullOrEmpty()]
-		[guid]
+		[string[]]
 		$Id
 		,
 		# Combined ReassignItemsTo and ReassignGroupsTo. If set, all user item and group records will be reassigned to the user provided.
 		[Parameter(ParameterSetName = 'ReassignAll')]
-		[guid]
+		[string]
 		$ReassignTo
 		,
 		# If set, all user item records will be reassigned to the user provided.
 		[Parameter(ParameterSetName = 'Reassign')]
-		[guid]
+		[string]
 		$ReassignItemsTo
 		,
 		# If set, all user group records will be reassigned to the user provided.
 		[Parameter(ParameterSetName = 'Reassign')]
-		[guid]
+		[string]
 		$ReassignGroupsTo
 		,
 		# Force revoke. Don't ask for confirmation unless explicitly specified.
@@ -934,42 +1233,50 @@ function Revoke-Employee {
 		$Header = @{
 			Authorization = "Bearer $($Script:Token.access_token)"
 		}
-		$Data = @{
-			UserIds = @()
-		}
 		if ($ReassignTo) {
 			$ReassignToUser = Get-User -Id $ReassignTo
 			if (!$ReassignToUser) {
 				throw 'ReassignTo user does not exist.'
 			}
-			Write-Verbose -Message "$($MyInvocation.MyCommand) : Reassigning to: '$($ReassignToUser.FullName)' ($($ReassignToUser.Username)) ($($ReassignToUser.Id))."
-			$Data.itemsReassignTo = $ReassignTo
-			$Data.groupsReassignTo = $ReassignTo
+			Write-Verbose -Message "$($MyInvocation.MyCommand.Name) : Reassigning to: '$($ReassignToUser.FullName)' ($($ReassignToUser.Username)) ($($ReassignToUser.Id))."
+			$ItemsReassignTo = $ReassignToUser.Id
+			$GroupsReassignTo = $ReassignToUser.Id
 		}
 		if ($ReassignItemsTo) {
 			$ReassignItemsToUser = Get-User -Id $ReassignItemsTo
 			if (!$ReassignItemsToUser) {
 				throw 'ReassignItemsTo user does not exist.'
 			}
-			Write-Verbose -Message "$($MyInvocation.MyCommand) : Reassigning items to: '$($ReassignItemsToUser.FullName)' ($($ReassignItemsToUser.Username)) ($($ReassignItemsToUser.Id))."
-			$Data.itemsReassignTo = $ReassignItemsToUser
+			Write-Verbose -Message "$($MyInvocation.MyCommand.Name) : Reassigning items to: '$($ReassignItemsToUser.FullName)' ($($ReassignItemsToUser.Username)) ($($ReassignItemsToUser.Id))."
+			$ItemsReassignTo = $ReassignItemsToUser.Id
 		}
 		if ($ReassignGroupsTo) {
 			$ReassignGroupsToUser = Get-User -Id $ReassignGroupsTo
 			if (!$ReassignGroupsToUser) {
 				throw 'ReassignGroupsTo user does not exist.'
 			}
-			Write-Verbose -Message "$($MyInvocation.MyCommand) : Reassigning groups to: '$($ReassignGroupsToUser.FullName)' ($($ReassignGroupsToUser.Username)) ($($ReassignGroupsToUser.Id))."
-			$Data.groupsReassignTo = $ReassignGroupsToUser
+			Write-Verbose -Message "$($MyInvocation.MyCommand.Name) : Reassigning groups to: '$($ReassignGroupsToUser.FullName)' ($($ReassignGroupsToUser.Username)) ($($ReassignGroupsToUser.Id))."
+			$GroupsReassignTo = $ReassignGroupsToUser.Id
 		}
-
 		$Uri = "https://$($Script:Token.subdomain).$($Script:Token.apicp)/sf/v3/Users/Employees/Downgrade"
 	}
 	process {
-		$SfUser = Get-User -Id $Id
-		$Data.UserIds += $SfUser.Id
-		if ($PSCmdlet.ShouldProcess("'$($SfUser.FullName)' ($($SfUser.Username)) ($($SfUser.Id)).")) {
-			Write-Verbose -Message "$($MyInvocation.MyCommand) : Revoking 'Employee' status from user: '$($SfUser.FullName)' ($($SfUser.Username)) ($($SfUser.Id))."
+		if ($id.Count -gt 1) {
+			$UserIds = $Id
+			$Message = "Revoking 'Employee' status from $($Id.Count) users."
+		}
+		else {
+			$SfUser = Get-User -Id $Id[0]
+			$UserIds = @($SfUser.Id)
+			$Message = "Revoking 'Employee' status from user: '$($SfUser.FullName)' ($($SfUser.Username)) ($($SfUser.Id))."
+		}
+		$Data = @{
+			UserIds = $UserIds
+			ReassignItemsToId = $ItemsReassignTo
+			ReassignGRoupsToId = $GroupsReassignTo
+		}
+		if ($PSCmdlet.ShouldProcess($Message)) {
+			Write-Verbose -Message "$($MyInvocation.MyCommand.Name) : $($Message)"
 			$Splatter = @{
 				ContentType = 'application/json'
 				Method = 'POST'
@@ -980,8 +1287,14 @@ function Revoke-Employee {
 			if ($Script:Config.Proxy) {
 				$Splatter.Proxy = $Script:Config.Proxy
 			}
-			Write-Verbose -Message "$($MyInvocation.MyCommand) : Invoke-RestMethod @$($Splatter | ConvertTo-Json -Compress)"
-			Invoke-RestMethod @Splatter
+			Write-Verbose -Message "$($MyInvocation.MyCommand.Name) : Invoke-RestMethod @$($Splatter | ConvertTo-Json -Compress)"
+			try {
+				$Response = Invoke-RestMethod @Splatter
+			}
+			catch {
+				$Message = "Failed revoking 'Employee' status from user: '$($SfUser.FullName)' ($($SfUser.Username)) ($($SfUser.Id)). Error: $($_)"
+				Write-Warning -Message $Message
+			}
 		}
 	}
 	end {}
@@ -997,7 +1310,7 @@ function Grant-Employee {
 				,  ValueFromPipeline = $true
 				,  ValueFromPipelineByPropertyName = $true)]
 		[ValidateNotNullOrEmpty()]
-		[guid]
+		[string]
 		$Id
 		,
 		# Force grant. Don't ask for confirmation unless explicitly specified.
@@ -1021,7 +1334,7 @@ function Grant-Employee {
 		$Uri = "https://$($Script:Token.subdomain).$($Script:Token.apicp)/sf/v3/Users/AccountUser($($Id))"
 		$SfUser = Get-User -Id $Id
 		if ($PSCmdlet.ShouldProcess("'$($SfUser.FullName)' ($($SfUser.Username)) ($($SfUser.Id)).")) {
-			Write-Verbose -Message "$($MyInvocation.MyCommand) : Granting 'Employee' status to user: '$($SfUser.FullName)' ($($SfUser.Username)) ($($SfUser.Id))."
+			Write-Verbose -Message "$($MyInvocation.MyCommand.Name) : Granting 'Employee' status to user: '$($SfUser.FullName)' ($($SfUser.Username)) ($($SfUser.Id))."
 			$Splatter = @{
 				ContentType = 'application/json'
 				Method = 'PATCH'
@@ -1032,11 +1345,12 @@ function Grant-Employee {
 			if ($Script:Config.Proxy) {
 				$Splatter.Proxy = $Script:Config.Proxy
 			}
-			Write-Verbose -Message "$($MyInvocation.MyCommand) : Invoke-RestMethod @$($Splatter | ConvertTo-Json -Compress)"
+			Write-Verbose -Message "$($MyInvocation.MyCommand.Name) : Invoke-RestMethod @$($Splatter | ConvertTo-Json -Compress)"
 			Invoke-RestMethod @Splatter
 		}
 	}
 	end {}
 }
-New-Variable -Force -Scope Script -Name Config -Value (Import-Config -Path (Join-Path -Path $PSScriptRoot -ChildPath '.config.xml'))
+New-Variable -Force -Scope Script -Name ConfigPath -Value (Join-Path -Path $PSScriptRoot -ChildPath '.config.xml')
+New-Variable -Force -Scope Script -Name Config -Value (Import-Config -Path $ConfigPath)
 New-Variable -Force -Scope Script -Name Token -Value $null
