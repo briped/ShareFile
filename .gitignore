@@ -10,7 +10,3 @@ Thumbs.db
 # ignore all dotfiles
 .*
 !.gitignore
-
-# ignore all test files and folders
-test*
-Test*

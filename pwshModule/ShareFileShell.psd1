@@ -98,7 +98,7 @@ PrivateData = @{
         # Tags = @()
 
         # A URL to the license for this module.
-        LicenseUri = 'https://raw.githubusercontent.com/briped/ShareFileShell/main/LICENSE'
+        LicenseUri = 'https://raw.githubusercontent.com/briped/ShareFile/main/pwshModule/LICENSE'
 
         # A URL to the main website for this project.
         # ProjectUri = ''
